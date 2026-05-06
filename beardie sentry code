@@ -1,0 +1,86 @@
+mport network
+import urequests
+import time
+import dht
+from machine import Pin
+
+# --- CONFIGURATION ---
+WIFI_SSID = "Hmmm"
+WIFI_PASS = "imbored!"
+NTFY_TOPIC = "cody_beardie_sentry"
+ALERT_COOLDOWN = 3600 # 3600 seconds = 1 hour
+
+# --- HARDWARE SETUP ---
+sensor = dht.DHT11(Pin(18)) 
+green_led = Pin(2, Pin.OUT)
+red_led = Pin(4, Pin.OUT)
+
+# Track the last time an alert was sent
+last_alert_time = 0
+
+def connect_wifi():
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(False)
+    time.sleep(1)
+    wlan.active(True)
+    
+    print(f"Connecting to {WIFI_SSID}...")
+    wlan.connect(WIFI_SSID, WIFI_PASS)
+    
+    while not wlan.isconnected():
+        red_led.value(1)
+        time.sleep(0.5)
+        red_led.value(0)
+        time.sleep(0.5)
+    
+    print("Online! IP:", wlan.ifconfig()[0])
+    green_led.value(1)
+
+def send_alert(msg):
+    global last_alert_time
+    current_time = time.time()
+    
+    # Only send if an hour has passed since the last notification
+    if current_time - last_alert_time > ALERT_COOLDOWN:
+        try:
+            url = f"https://ntfy.sh/{NTFY_TOPIC}"
+            urequests.post(url, data=msg, headers={"Title": "Beardie-Sentry"})
+            print("Phone notified!")
+            last_alert_time = current_time # Reset the timer
+        except:
+            print("Network error: Could not send alert")
+    else:
+        print("Alert skipped: Waiting for the 1-hour cooldown.")
+
+# --- START PROJECT ---
+connect_wifi()
+
+while True:
+    try:
+        time.sleep(10)
+        sensor.measure()
+        
+        t = sensor.temperature()
+        h = sensor.humidity()
+        temp_f = (t * 9/5) + 32
+        
+        print(f"Temp: {temp_f}F | Humidity: {h}%")
+
+        if temp_f > 105:
+            send_alert(f"HOT ALERT: {temp_f}F. Check the basking lamp!")
+            red_led.value(1)
+            green_led.value(0)
+        elif temp_f < 70:
+            send_alert(f"COLD ALERT: {temp_f}F. Habitat is too chilly!")
+            red_led.value(1)
+            green_led.value(0)
+        else:
+            # Everything is fixed/normal
+            green_led.value(1) 
+            red_led.value(0)
+            # Optional: Reset timer so it alerts immediately if it breaks again
+            # last_alert_time = 0 
+
+    except Exception as e:
+        print("Sensor reading failed...")
+        red_led.value(1)
